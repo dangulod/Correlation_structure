@@ -16,14 +16,21 @@ namespace pt = boost::property_tree;
 using std::string;
 using std::vector;
 
-class Equation : public vector<std::pair<string, double>>
+struct Weight
+{
+    string name;
+    double weight;
+    bool optim;
+};
+
+class Equation : public vector<Weight>
 {
 private:
     string name;
 
 public:
     Equation() = delete;
-    Equation(string name, vector<std::pair<string, double>> sensib);
+    Equation(string name, vector<Weight> sensib);
     Equation(const Equation & value) = default;
     Equation(Equation && value) = default;
     Equation operator=(Equation value);

@@ -1,13 +1,13 @@
 #include "Equation.h"
 
-Equation::Equation(string name, vector<std::pair<string, double>> sensib):
-    vector<std::pair<string, double>>(sensib), name(name)
+Equation::Equation(string name, vector<Weight> sensib):
+    vector<Weight>(sensib), name(name)
 {
     for (size_t ii = 0; ii < sensib.size(); ii++)
     {
         for (size_t jj = ii + 1; jj < sensib.size(); jj++)
         {
-            if (sensib[ii].first == sensib[jj].first) throw std::invalid_argument("Sensivity duplicated");
+            if (sensib[ii].name == sensib[jj].name) throw std::invalid_argument("Sensivity duplicated");
         }
     }
 }
@@ -33,7 +33,12 @@ pt::ptree Equation::to_ptree()
 
     for (auto && ii : *this)
     {
-        sensib.put(ii.first, ii.second);
+        pt::ptree weight;
+        weight.put("name", ii.name);
+        weight.put("weight", ii.weight);
+        weight.put("optim", ii.optim);
+
+        sensib.push_back(std::make_pair("", weight));
     }
 
     root.add_child("sensitivities", sensib);
@@ -43,21 +48,23 @@ pt::ptree Equation::to_ptree()
 
 Equation Equation::from_ptree(pt::ptree & value)
 {
-    vector<std::pair<string, double>> sensib;
+    vector<Weight> sensib;
 
     BOOST_FOREACH(const pt::ptree::value_type & ii, value.get_child("sensitivities"))
     {
-        sensib.push_back(std::make_pair(ii.first, ii.second.get_value<double>()));
+        sensib.push_back({ii.second.get<std::string>("name"),
+                          ii.second.get<double>("weight"),
+                          ii.second.get<bool>("optim")});
     }
 
-    return Equation(value.get_child("name").get_value<string>(), sensib);
+    return Equation(value.get<std::string>("name"), sensib);
 }
 
 double Equation::get_weight(string factor)
 {
     for (auto & ii : *this)
     {
-        if (ii.first == factor) return ii.second;
+        if (ii.name == factor) return ii.weight;
     }
 
 	return 0;
@@ -65,7 +72,7 @@ double Equation::get_weight(string factor)
 
 double Equation::get_weight(size_t n)
 {
-    return (*this)[n].second;
+    return (*this)[n].weight;
 }
 
 string Equation::get_name()
@@ -75,7 +82,7 @@ string Equation::get_name()
 
 void Equation::set_weights(size_t pos, double value)
 {
-    this->at(pos).second = value;
+    this->at(pos).weight = value;
 }
 
 void Equation::set_weights(arma::vec value)

@@ -66,7 +66,10 @@ size_t CorrelationStructure::n_weights()
 
     for (auto & ii: *this)
     {
-        n += ii.size();
+        for (auto & jj: ii)
+        {
+            if (jj.optim) ++n;
+        }
     }
     return n;
 }
@@ -115,8 +118,14 @@ arma::mat CorrelationStructure::get_sensitivities(arma::vec weigths)
     {
         for (size_t jj = 0; jj < (*this)[ii].size(); jj++)
         {
-            cc(ii, this->factorMatrix.pos_factor((*this)[ii][jj].first)) = weigths(ww);
-            ww++;
+            if ((*this)[ii][jj].optim)
+            {
+                cc(ii, this->factorMatrix.pos_factor((*this)[ii][jj].name)) = weigths(ww);
+                ww++;
+            } else
+            {
+                cc(ii, this->factorMatrix.pos_factor((*this)[ii][jj].name)) = (*this)[ii][jj].weight;
+            }
         }
     }
     return cc;
@@ -132,8 +141,15 @@ arma::mat CorrelationStructure::get_sensitivities(const double * weigths)
     {
         for (size_t jj = 0; jj < (*this)[ii].size(); jj++)
         {
-            cc(ii, this->factorMatrix.pos_factor((*this)[ii][jj].first)) = weigths[ww];
-            ww++;
+            if ((*this)[ii][jj].optim)
+            {
+                cc(ii, this->factorMatrix.pos_factor((*this)[ii][jj].name)) = weigths[ww];
+                ww++;
+            }
+            else
+            {
+                cc(ii, this->factorMatrix.pos_factor((*this)[ii][jj].name)) = (*this)[ii][jj].weight;
+            }
         }
     }
     return cc;
@@ -150,8 +166,11 @@ void CorrelationStructure::set_weights(arma::vec weights)
     {
         for (size_t rr = 0; rr < jj.size(); rr++)
         {
-            jj.set_weights(rr, weights(ss));
-            ss++;
+            if (jj.at(rr).optim)
+            {
+                jj.set_weights(rr, weights(ss));
+                ss++;
+            }
         }
     }
 }
@@ -166,8 +185,11 @@ arma::vec CorrelationStructure::get_weights()
     {
         for (size_t rr = 0; rr < jj.size(); rr++)
         {
-            w(ss) = jj.get_weight(rr);
-            ss++;
+            if (jj.at(rr).optim)
+            {
+                w(ss) = jj.get_weight(rr);
+                ss++;
+            }
         }
     }
 
@@ -184,8 +206,11 @@ vector<double> CorrelationStructure::get_weights_v()
     {
         for (size_t rr = 0; rr < jj.size(); rr++)
         {
-            w[ss] = jj.get_weight(rr);
-            ss++;
+            if (jj.at(rr).optim)
+            {
+                w[ss] = jj.get_weight(rr);
+                ss++;
+            }
         }
     }
 
@@ -232,8 +257,7 @@ double CorrelationStructure::evaluate(const double * weights, CorMatrix & empiri
 {
     double R2 = 0;
     arma::mat fit = this->fitted_cor(weights, &R2);
-    //double r = arma::accu(pow(empiric.get_cor() - fit, 2));
-    double r = arma::abs(empiric.get_cor() - this->fitted_cor()).max();
+    double r = arma::accu(pow(empiric.get_cor() - fit, 2));
 
     return r + r * R2;
 }
@@ -242,8 +266,7 @@ double CorrelationStructure::evaluate(arma::vec weights, CorMatrix & empiric)
 {
     double R2 = 0;
     arma::mat fit = this->fitted_cor(weights, &R2);
-    //double r = arma::accu(pow(empiric.get_cor() - fit, 2));
-    double r = arma::abs(empiric.get_cor() - this->fitted_cor()).max();
+    double r = arma::accu(pow(empiric.get_cor() - fit, 2));
 
     return r + r * R2;
 }
@@ -257,9 +280,7 @@ double CorrelationStructure::evaluate(CorMatrix & empiric)
         if (empiric.get_factors()[ii] != (*this)[ii].get_name()) throw std::invalid_argument("Equations do not match or the order is not correct");
     }
 
-    //return arma::accu(pow(empiric.get_cor() - this->fitted_cor(), 2));
-    return arma::abs(empiric.get_cor() - this->fitted_cor()).max();
-
+    return arma::accu(pow(empiric.get_cor() - this->fitted_cor(), 2));
 }
 
 vector<double> CorrelationStructure::lower_bounds()
@@ -277,6 +298,74 @@ vector<double> CorrelationStructure::upper_bounds()
 
     return upper;
 }
+
+double CorrelationStructure::minimize(CorMatrix & empirical, nlopt::algorithm algorithm, int max_iter)
+{
+    struct Arg_data
+    {
+        int iter;
+        CorrelationStructure *CS;
+        CorMatrix *EM;
+        Arg_data(CorrelationStructure & CS, CorMatrix & EM) : iter(0)
+        {
+            this->CS = &CS;
+            this->EM = &EM;
+        }
+        ~Arg_data() = default;
+    };
+
+    auto fitnes = [] (const std::vector<double> &x, std::vector<double> &grad, void * args)
+    {
+        Q_UNUSED(grad);
+        Q_UNUSED(args);
+
+        Arg_data * data = static_cast<Arg_data*>(args);
+
+        double f = data->CS->evaluate(x, *data->EM);
+
+        printf("iter: %i f: %f\r", data->iter, f);
+
+        data->iter++;
+        return f;
+    };
+
+    // GN_ISRES GN_ESCH GN_MLSL GN_CRS2_LM LN_BOBYQA LN_AUGLAG_EQ LN_COBYLA
+    nlopt::opt optimizer(algorithm, this->n_weights());
+
+    optimizer.set_lower_bounds(this->lower_bounds());
+    optimizer.set_upper_bounds(this->upper_bounds());
+
+    std::vector<double> x0 = this->get_weights_v();
+
+    Arg_data arg(*this, empirical);
+
+    optimizer.set_min_objective(fitnes, (void*)&arg);
+
+    optimizer.set_xtol_rel(1e-9);
+    optimizer.set_maxeval(max_iter);
+
+    double minf;
+
+    try
+    {
+        optimizer.optimize(x0, minf);
+        std::cout << "found minimum at = "
+                  << std::setprecision(10) << minf << std::endl;
+    }
+    catch(std::exception &e)
+    {
+        std::cout << "nlopt failed: " << e.what() << std::endl;
+    }
+
+    printf("found minimum after %d evaluations\n", arg.iter);
+
+    this->set_weights(x0);
+
+    return 0;
+
+}
+
+
 
 
 

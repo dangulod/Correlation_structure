@@ -117,7 +117,7 @@ bool CorMatrix::check_equation(Equation & value)
 
     for (auto && ii: value )
     {
-        tt += (std::find(this->factors.begin(), this->factors.end(), ii.first) != this->factors.end());
+        tt += (std::find(this->factors.begin(), this->factors.end(), ii.name) != this->factors.end());
     }
 
     return tt == value.size() ? 1 : 0;

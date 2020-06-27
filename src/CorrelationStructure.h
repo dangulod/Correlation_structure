@@ -3,8 +3,11 @@
 
 #include <vector>
 #include <string>
+#include <nlopt.hpp>
 #include "Equation.h"
 #include "FactorCorrelation.h"
+
+#  define Q_UNUSED(x) (void)x;
 
 using std::vector;
 
@@ -51,6 +54,8 @@ public:
 
     vector<double> lower_bounds();
     vector<double> upper_bounds();
+
+    double minimize(CorMatrix & empirical, nlopt::algorithm algorithm, int max_iter);
 };
 
 

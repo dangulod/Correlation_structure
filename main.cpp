@@ -4,94 +4,115 @@
 #include <nlopt.hpp>
 #include <chrono>
 
-class CS_data
+void show_usage(string name)
 {
-public:
-    CorrelationStructure *CS;
-    CorMatrix *EM;
-    CS_data() =default;
-    CS_data(CorrelationStructure & CS, CorMatrix & EM)
-    {
-        this->CS = &CS;
-        this->EM = &EM;
-    }
-    ~CS_data() = default;
-};
+    std::cerr << "Usage: " << name << " <options> parameters\n"
+                  << "Options:\n\n"
+                  << "\t-h, --help\t\t\tShow this help message\n"
+                  << "\t-w, --weights file.json\t\tSpecify the path of the file with the sensitivities and the factor correlation\n"
+                  << "\t-e, --empirical file.json\tSpecify the path of the file with the empirical correlation\n"
+                  << "\t-o, --optimizer int\t\tSpecify the optimization algorithm\n\n"
+                  << "\t\t1\tGN_ISRES\n"
+                  << "\t\t2\tGN_ESCH\n"
+                  << "\t\t3\tGN_MLSL\n"
+                  << "\t\t4\tGN_CRS2_LM\n"
+                  << "\t\t5\tLN_BOBYQA\n"
+                  << "\t\t6\tLN_AUGLAG_EQ\n"
+                  << "\t\t7\tLN_COBYLA\n\n"
+                  << "\t-i,--iterations int\t\tSpecify the maximun number of iterations\n\n"
+                  << "Example: " << name  << " -w weights.json -e empirical.json -o 1 -i 1000000"
 
-static int count = 0;
-
-double myfunc2(unsigned n, const double *x, double *grad, void *my_func_data)
-{
-    ++count;
-
-    CS_data * data = static_cast<CS_data*>(my_func_data);
-
-    double f = data->CS->evaluate(x, *data->EM);
-
-    printf("iter: %i f: %f\r", count, f);
-
-    return f;
+                  << std::endl;
 }
 
-int main()
+// ./EC_equation  -w /opt/share/data/EC21_AggEqu/EQ_CR_weights.json -e /opt/share/data/EC21_AggEqu/EQ_CR_cor.json -o 1 -i 10000
+
+int main(int argc, char *argv[])
 {
+    if (argc < 2)
+    {
+        show_usage(argv[0]);
+        return 1;
+    }
+
+    std::string file_weights, file_empirical;
+    int optim, max_iter;
+    nlopt::algorithm algorithm;
+
+    for (int ii = 1; ii < argc; ii +=2)
+    {
+        std::string arg = argv[ii];
+        if ((arg == "-h") || (arg == "--help")) {
+            show_usage(argv[0]);
+            return 1;
+        } else if ((arg == "-w") || (arg == "--weights"))
+        {
+            file_weights = argv[ii + 1];
+        } else if ((arg == "-e") || (arg == "--empirical"))
+        {
+            file_empirical = argv[ii + 1];
+        } else if ((arg == "-o") || (arg == "--optimizer"))
+        {
+            optim = atoi(argv[ii + 1]);
+
+            if ((optim < 1) | (optim > 7))
+            {
+                printf("-o, --optimizer must be between 1 and 7\n");
+                return 2;
+            }
+
+            switch (optim)
+            {
+            case 1:
+                algorithm = nlopt::GN_ISRES;
+                break;
+            case 2:
+                algorithm = nlopt::GN_ESCH;
+                break;
+            case 3:
+                algorithm = nlopt::GN_MLSL;
+                break;
+            case 4:
+                algorithm = nlopt::GN_CRS2_LM;
+                break;
+            case 5:
+                algorithm = nlopt::LN_BOBYQA;
+                break;
+            case 6:
+                algorithm = nlopt::LN_AUGLAG_EQ;
+                break;
+            case 7:
+                algorithm = nlopt::LN_COBYLA;
+                break;
+            default:
+                break;
+            }
+
+        } else if ((arg == "-i") || (arg == "--iterations"))
+        {
+            max_iter = atoi(argv[ii + 1]);
+        }
+    }
+
     const auto startTime = std::chrono::high_resolution_clock::now();
 
     pt::ptree root;
-    pt::read_json("/opt/share/data/EC21_AggEqu/13factores/equations.json", root);
+    pt::read_json(file_weights, root);
     CorrelationStructure CS = CorrelationStructure::from_ptree(root);
 
-    pt::read_json("/opt/share/data/EC21_AggEqu/13factores/total_matrix.json", root);
+    pt::read_json(file_empirical, root);
     CorMatrix M = CorMatrix::from_ptree(root);
 
-    CS_data my_dat(CS, M);
 
     printf("sumsq(E - CS) = %g\n", CS.evaluate(M)); // Tiene que estar para asegurarse de que tiene la misma dimension
 
-    //nlopt::opt optimizer(nlopt::GN_ISRES, CS.n_weights()); // GN_ISRES GN_ESCH GN_MLSL GN_CRS2_LM NLOPT_LN_BOBYQA
-    nlopt::opt optimizer(nlopt::LN_AUGLAG_EQ, CS.n_weights());
-    //nlopt::opt optimizer(nlopt::LN_COBYLA, CS.n_weights());
-
-
-    optimizer.set_lower_bounds(CS.lower_bounds());
-    optimizer.set_upper_bounds(CS.upper_bounds());
-
-    std::vector<double> x0 = CS.get_weights_v();
-
-    optimizer.set_min_objective(myfunc2, (void*)&my_dat);
-
-    optimizer.set_xtol_rel(1e-9);
-    optimizer.set_maxeval(2e4);
-    //optimizer.set_population(1e3);
-
-    double minf;
-
-    try
-    {
-        nlopt::result result = optimizer.optimize(x0, minf);
-        std::cout << "found minimum at f(" << ") = "
-                  << std::setprecision(10) << minf << std::endl;
-    }
-    catch(std::exception &e)
-    {
-        std::cout << "nlopt failed: " << e.what() << std::endl;
-    }
-
-    CS.set_weights(x0);
-    CS.get_sensitivities().print();
-
-    printf("found minimum after %d evaluations\n", count);
+    CS.minimize(M, algorithm, max_iter);
 
     const auto endTime = std::chrono::high_resolution_clock::now();
 
     printf("Time elapsed: %f seconds\n", std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(endTime - startTime).count() / 1000);
 
-    for (auto & ii: CS)
-    {
-        std::cout << "R2: " << ii.R2(CS.get_factor_cor()) << std::endl;
-    }
-
-    pt::write_json("/opt/share/data/EC21_AggEqu/13factores/equations.json", CS.to_ptree());
+    pt::write_json(file_weights, CS.to_ptree());
 
     return 0;
 }
