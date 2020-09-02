@@ -344,6 +344,8 @@ double CorrelationStructure::minimize(CorMatrix & empirical, nlopt::algorithm al
     optimizer.set_xtol_rel(1e-9);
     optimizer.set_maxeval(max_iter);
 
+    nlopt_srand(987654321);
+
     double minf;
 
     try
